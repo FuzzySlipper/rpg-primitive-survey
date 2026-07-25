@@ -24,6 +24,11 @@ cargo run -- inventory \
 
 If `main` does not exist, inventory reports the detected default branch and
 available heads and exits. It never silently substitutes another branch.
+The exact commit is fetched with depth one under an operating-system file-size
+limit before checkout. The projected Git objects, working tree, and index must
+fit `--max-repository-bytes`; an oversized or interrupted fetch is removed and
+recorded as a resumable partial receipt. This conservative path requires
+`prlimit` (util-linux) and never falls back to an unbounded clone.
 
 Scan applies an explicit source whitelist to the pinned inventory:
 
@@ -45,6 +50,9 @@ Both commands enforce configurable limits. A limit produces a machine-readable
 truncates or claims completeness. Rerunning against the same study continues at
 the original pinned revision. Raise the relevant limit when the recorded total
 has reached the old ceiling.
+
+An existing checkout must have the recorded `HEAD` and a clean tracked and
+untracked status. Local edits never become evidence under an old pin.
 
 Generated output is local-only under:
 

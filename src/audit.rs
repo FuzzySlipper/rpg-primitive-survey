@@ -10,6 +10,11 @@ const FORBIDDEN_EXTENSIONS: &[&str] = &[
 pub fn run(repository_root: &Path, max_tracked_bytes: u64) -> Result<(), String> {
     let tracked = git_source::tracked_files(repository_root)?;
     let mut violations = Vec::new();
+    for probe in [".work/survey-probe", ".survey-work/survey-probe"] {
+        if !git_source::is_ignored(repository_root, probe)? {
+            violations.push(format!("{probe}: required local work root is not ignored"));
+        }
+    }
     for relative in tracked {
         if relative.starts_with(".work/")
             || relative.starts_with(".survey-work/")

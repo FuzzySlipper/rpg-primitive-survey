@@ -7,8 +7,8 @@ use serde_json::Value;
 use crate::git_source;
 use crate::model::{
     Compatibility, Diagnostic, DocumentEvidence, InventoryCounts, InventoryReceipt, Limits,
-    PackInventory, ReceiptStatus, RepositoryReceipt, ResumeState, SCHEMA_VERSION, SourceIdentity,
-    SystemManifest,
+    PackDeclarationIssue, PackInventory, ReceiptStatus, RepositoryReceipt, ResumeState,
+    SCHEMA_VERSION, SourceIdentity, SystemManifest,
 };
 use crate::safety::{contained_join, directory_bytes, visit_files};
 use crate::shape::structural_signature;
@@ -20,7 +20,6 @@ pub const DEFAULT_SOURCE_POINTERS: &[&str] = &[
     "/system/publication/title",
     "/source/id",
     "/source",
-    "/_stats/compendiumSource",
 ];
 
 pub struct InventoryOptions {
@@ -75,12 +74,6 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
         git_source::inspect_remote(&options.repository, &options.requested_ref)?
     };
 
-    git_source::clone_pinned(
-        &options.repository,
-        &options.requested_ref,
-        &inspected.commit,
-        &checkout,
-    )?;
     let source_pointers = if options.source_pointers.is_empty() {
         DEFAULT_SOURCE_POINTERS
             .iter()
@@ -89,6 +82,34 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
     } else {
         options.source_pointers.clone()
     };
+    if let Some(receipt) = &previous {
+        let configuration_changed = receipt.manifest.path != options.manifest_path
+            || receipt.content_roots != options.content_roots
+            || receipt.source_pointers != source_pointers
+            || receipt.source_fallbacks != options.source_fallbacks;
+        let can_restart_partial = receipt.status == ReceiptStatus::Partial
+            && receipt.resume.next_file.is_none()
+            && receipt.resume.next_document_index.is_none();
+        if configuration_changed && !can_restart_partial {
+            return Err(
+                "existing study scope/configuration differs; choose another study id".to_owned(),
+            );
+        }
+    }
+    match git_source::materialize_pinned(
+        &options.repository,
+        &inspected.commit,
+        &checkout,
+        options.limits.max_repository_bytes,
+    )? {
+        git_source::MaterializeOutcome::Ready => {}
+        git_source::MaterializeOutcome::LimitExceeded { observed_bytes } => {
+            let receipt =
+                size_limited_receipt(options, &source_pointers, &inspected.commit, observed_bytes);
+            write_json(&inventory_path, &receipt)?;
+            return Ok(receipt);
+        }
+    }
     let repository_bytes = directory_bytes(&checkout)?;
     if repository_bytes > options.limits.max_repository_bytes {
         let receipt = size_limited_receipt(
@@ -104,17 +125,8 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
     let manifest_file = contained_join(&checkout, Path::new(&options.manifest_path))?;
     let manifest_value = read_json(&manifest_file)?;
     let manifest = parse_manifest(&options.manifest_path, &manifest_value);
-    let pack_sources = collect_pack_sources(&manifest_value, &options.content_roots);
-    if let Some(receipt) = &previous
-        && (receipt.source_pointers != source_pointers
-            || receipt.source_fallbacks != options.source_fallbacks)
-    {
-        return Err(
-            "existing study source-pointer configuration differs; choose another study id"
-                .to_owned(),
-        );
-    }
-
+    let (pack_sources, pack_declaration_issues) =
+        collect_pack_sources(&manifest_value, &options.content_roots);
     let mut discovery = discover_pack_files(&checkout, &pack_sources)?;
     discovery
         .document_files
@@ -259,6 +271,22 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
             maximum: None,
         });
     }
+    if !pack_declaration_issues.is_empty() {
+        diagnostics.push(Diagnostic {
+            code: "SURVEY_PACK_DECLARATION_INVALID".to_owned(),
+            message: format!(
+                "manifest pack declarations are invalid: {}",
+                pack_declaration_issues
+                    .iter()
+                    .map(|issue| format!("{} ({})", issue.pack_id, issue.reason))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            limit: None,
+            observed: Some(pack_declaration_issues.len() as u64),
+            maximum: None,
+        });
+    }
     let status = if diagnostics.is_empty() {
         ReceiptStatus::Complete
     } else {
@@ -272,11 +300,14 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
             instruction: "inventory traversal completed within configured limits".to_owned(),
         }
     } else {
+        let resumable = limit_cursor.is_some() || unresolved_limited || unsupported_files > 0;
         ResumeState {
-            resumable: true,
+            resumable,
             next_file: limit_cursor.as_ref().map(|cursor| cursor.file.clone()),
             next_document_index: limit_cursor.as_ref().map(|cursor| cursor.document_index),
-            instruction: if limit_cursor.is_some() {
+            instruction: if !resumable {
+                "the pinned source has invalid or missing pack declarations; select a corrected revision or an explicit supported profile".to_owned()
+            } else if limit_cursor.is_some() {
                 "rerun inventory with the same study id and a larger --max-decoded-documents; also resolve any other reported diagnostics".to_owned()
             } else {
                 "adjust the reported bounds or add an explicit system profile/decoder, then rerun at the same pinned revision".to_owned()
@@ -298,9 +329,11 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
         },
         manifest,
         limits: options.limits.clone(),
+        content_roots: options.content_roots.clone(),
         source_pointers,
         source_fallbacks: options.source_fallbacks.clone(),
         packs,
+        pack_declaration_issues,
         counts,
         documents,
         diagnostics,
@@ -336,9 +369,11 @@ fn size_limited_receipt(
             compatibility: Compatibility::default(),
         },
         limits: options.limits.clone(),
+        content_roots: options.content_roots.clone(),
         source_pointers: source_pointers.to_vec(),
         source_fallbacks: options.source_fallbacks.clone(),
         packs: Vec::new(),
+        pack_declaration_issues: Vec::new(),
         counts: InventoryCounts::default(),
         documents: Vec::new(),
         diagnostics: vec![Diagnostic {
@@ -398,23 +433,33 @@ fn parse_manifest(path: &str, value: &Value) -> SystemManifest {
     }
 }
 
-fn collect_pack_sources(manifest: &Value, extra_roots: &[String]) -> Vec<PackSource> {
+fn collect_pack_sources(
+    manifest: &Value,
+    extra_roots: &[String],
+) -> (Vec<PackSource>, Vec<PackDeclarationIssue>) {
     let mut packs = Vec::new();
+    let mut issues = Vec::new();
     if let Some(values) = manifest.get("packs").and_then(Value::as_array) {
         for (index, value) in values.iter().enumerate() {
+            let id = value
+                .get("name")
+                .or_else(|| value.get("id"))
+                .and_then(Value::as_str)
+                .map_or_else(|| format!("manifest-pack-{index}"), str::to_owned);
             if let Some(path) = value.get("path").and_then(Value::as_str) {
                 packs.push(PackSource {
-                    id: value
-                        .get("name")
-                        .or_else(|| value.get("id"))
-                        .and_then(Value::as_str)
-                        .map_or_else(|| format!("manifest-pack-{index}"), str::to_owned),
+                    id,
                     path: path.to_owned(),
                     document_type: value
                         .get("type")
                         .or_else(|| value.get("documentType"))
                         .and_then(Value::as_str)
                         .map(str::to_owned),
+                });
+            } else {
+                issues.push(PackDeclarationIssue {
+                    pack_id: id,
+                    reason: "missing or non-string path".to_owned(),
                 });
             }
         }
@@ -431,8 +476,23 @@ fn collect_pack_sources(manifest: &Value, extra_roots: &[String]) -> Vec<PackSou
                         .and_then(Value::as_str)
                         .map(str::to_owned),
                 });
+            } else {
+                issues.push(PackDeclarationIssue {
+                    pack_id: id.clone(),
+                    reason: "missing or non-string path".to_owned(),
+                });
             }
         }
+    }
+    if manifest.get("packs").is_some()
+        && !manifest
+            .get("packs")
+            .is_some_and(|value| value.is_array() || value.is_object())
+    {
+        issues.push(PackDeclarationIssue {
+            pack_id: "<packs>".to_owned(),
+            reason: "packs must be an array or object".to_owned(),
+        });
     }
     for (index, path) in extra_roots.iter().enumerate() {
         packs.push(PackSource {
@@ -443,7 +503,7 @@ fn collect_pack_sources(manifest: &Value, extra_roots: &[String]) -> Vec<PackSou
     }
     packs.sort_by(|left, right| left.path.cmp(&right.path));
     packs.dedup_by(|left, right| left.path == right.path);
-    packs
+    (packs, issues)
 }
 
 fn discover_pack_files(checkout: &Path, packs: &[PackSource]) -> Result<FileDiscovery, String> {

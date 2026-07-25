@@ -96,6 +96,13 @@ pub struct PackInventory {
     pub unsupported_files: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackDeclarationIssue {
+    pub pack_id: String,
+    pub reason: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SourceIdentity {
@@ -152,9 +159,11 @@ pub struct InventoryReceipt {
     pub repository: RepositoryReceipt,
     pub manifest: SystemManifest,
     pub limits: Limits,
+    pub content_roots: Vec<String>,
     pub source_pointers: Vec<String>,
     pub source_fallbacks: BTreeMap<String, String>,
     pub packs: Vec<PackInventory>,
+    pub pack_declaration_issues: Vec<PackDeclarationIssue>,
     pub counts: InventoryCounts,
     pub documents: Vec<DocumentEvidence>,
     pub diagnostics: Vec<Diagnostic>,

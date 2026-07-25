@@ -267,6 +267,195 @@ fn unsupported_pack_layout_cannot_claim_complete_inventory() {
     );
 }
 
+#[test]
+fn pathless_manifest_pack_cannot_claim_complete_inventory() {
+    let fixture = TempDir::new().expect("fixture tempdir");
+    copy_tree(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic"),
+        fixture.path(),
+    );
+    let manifest_path = fixture.path().join("system.json");
+    let mut manifest = read_json(&manifest_path);
+    manifest["packs"]
+        .as_array_mut()
+        .expect("pack array")
+        .push(serde_json::json!({
+            "name": "pathless-pack",
+            "type": "Item"
+        }));
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("encode manifest"),
+    )
+    .expect("write manifest");
+    initialize_git(fixture.path(), "main");
+    let work = TempDir::new().expect("work tempdir");
+    let output = run(&[
+        "inventory",
+        "--study",
+        "pathless",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--work-root",
+        work.path().to_str().expect("work path"),
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let inventory = read_json(&work.path().join("studies/pathless/inventory.json"));
+    assert_eq!(inventory["status"], "partial");
+    assert_eq!(
+        inventory["packDeclarationIssues"][0]["packId"],
+        "pathless-pack"
+    );
+    assert_eq!(inventory["resume"]["resumable"], false);
+    assert!(
+        inventory["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "SURVEY_PACK_DECLARATION_INVALID")
+    );
+}
+
+#[test]
+fn dirty_checkout_cannot_be_resumed_under_the_old_pin() {
+    let fixture = TempDir::new().expect("fixture tempdir");
+    copy_tree(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic"),
+        fixture.path(),
+    );
+    initialize_git(fixture.path(), "main");
+    let work = TempDir::new().expect("work tempdir");
+    let first = run(&[
+        "inventory",
+        "--study",
+        "dirty-resume",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--work-root",
+        work.path().to_str().expect("work path"),
+        "--max-decoded-documents",
+        "2",
+    ]);
+    assert!(first.status.success(), "{}", stderr(&first));
+
+    let checkout_pack = work
+        .path()
+        .join("studies/dirty-resume/checkout/packs/actions.jsonl");
+    let mut contents = fs::read_to_string(&checkout_pack).expect("read checkout pack");
+    contents.push_str(
+        "{\"name\":\"Dirty Evidence\",\"type\":\"action\",\"system\":{\"source\":{\"id\":\"core\"}}}\n",
+    );
+    fs::write(&checkout_pack, contents).expect("dirty checkout pack");
+
+    let resume = run(&[
+        "inventory",
+        "--study",
+        "dirty-resume",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--work-root",
+        work.path().to_str().expect("work path"),
+        "--max-decoded-documents",
+        "20",
+    ]);
+    assert!(!resume.status.success());
+    assert!(stderr(&resume).contains("SURVEY_CHECKOUT_DIRTY"));
+    let inventory = read_json(&work.path().join("studies/dirty-resume/inventory.json"));
+    assert_eq!(inventory["status"], "partial");
+    assert_eq!(inventory["counts"]["decodedDocuments"], 2);
+}
+
+#[test]
+fn repository_limit_stops_materialization_and_can_resume_at_the_same_pin() {
+    let fixture = TempDir::new().expect("fixture tempdir");
+    copy_tree(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic"),
+        fixture.path(),
+    );
+    initialize_git(fixture.path(), "main");
+    let pinned = git_output(fixture.path(), &["rev-parse", "HEAD"]);
+    let work = TempDir::new().expect("work tempdir");
+    let bounded = run(&[
+        "inventory",
+        "--study",
+        "bounded",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--work-root",
+        work.path().to_str().expect("work path"),
+        "--max-repository-bytes",
+        "1024",
+    ]);
+    assert!(bounded.status.success(), "{}", stderr(&bounded));
+    let inventory_path = work.path().join("studies/bounded/inventory.json");
+    let partial = read_json(&inventory_path);
+    assert_eq!(partial["status"], "partial");
+    assert_eq!(partial["repository"]["pinnedCommit"], pinned);
+    assert_eq!(
+        partial["diagnostics"][0]["code"],
+        "SURVEY_REPOSITORY_SIZE_LIMIT"
+    );
+    assert!(!work.path().join("studies/bounded/checkout").exists());
+
+    let resumed = run(&[
+        "inventory",
+        "--study",
+        "bounded",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--work-root",
+        work.path().to_str().expect("work path"),
+        "--max-repository-bytes",
+        "10000000",
+    ]);
+    assert!(resumed.status.success(), "{}", stderr(&resumed));
+    let complete = read_json(&inventory_path);
+    assert_eq!(complete["status"], "complete");
+    assert_eq!(complete["repository"]["pinnedCommit"], pinned);
+}
+
+#[test]
+fn bounded_fetch_stops_a_remote_like_oversized_snapshot() {
+    let fixture = TempDir::new().expect("fixture tempdir");
+    copy_tree(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic"),
+        fixture.path(),
+    );
+    let mut state = 0x9e37_79b9_u32;
+    let incompressible = (0..4_000_000)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect::<Vec<_>>();
+    fs::write(fixture.path().join("bounded-source.bin"), incompressible)
+        .expect("write bounded source probe");
+    initialize_git(fixture.path(), "main");
+    let work = TempDir::new().expect("work tempdir");
+    let repository = format!("file://{}", fixture.path().display());
+    let output = run(&[
+        "inventory",
+        "--study",
+        "bounded-fetch",
+        "--repository",
+        &repository,
+        "--work-root",
+        work.path().to_str().expect("work path"),
+        "--max-repository-bytes",
+        "1200000",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let inventory = read_json(&work.path().join("studies/bounded-fetch/inventory.json"));
+    assert_eq!(inventory["status"], "partial");
+    assert_eq!(
+        inventory["diagnostics"][0]["code"],
+        "SURVEY_REPOSITORY_SIZE_LIMIT"
+    );
+    assert!(!work.path().join("studies/bounded-fetch/checkout").exists());
+}
+
 fn run(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rpg-primitive-survey"))
         .args(arguments)

@@ -37,6 +37,7 @@ pub fn run(options: &ScanOptions) -> Result<ScanReceipt, String> {
         );
     }
     let checkout = contained_join(&study_root, Path::new("checkout"))?;
+    git_source::assert_clean_checkout(&checkout)?;
     let head = git_source::head_commit(&checkout)?;
     if head != inventory.repository.pinned_commit {
         return Err(format!(
@@ -50,6 +51,22 @@ pub fn run(options: &ScanOptions) -> Result<ScanReceipt, String> {
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
+    let scan_path = contained_join(&study_root, Path::new("scan.json"))?;
+    if scan_path.exists() {
+        let previous_bytes = fs::read(&scan_path)
+            .map_err(|error| format!("failed to read {}: {error}", scan_path.display()))?;
+        let previous: ScanReceipt = serde_json::from_slice(&previous_bytes)
+            .map_err(|error| format!("failed to decode {}: {error}", scan_path.display()))?;
+        let previous_whitelist = previous
+            .included_source_whitelist
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if previous_whitelist != whitelist {
+            return Err(
+                "existing scan source whitelist differs; choose another study id".to_owned(),
+            );
+        }
+    }
     let source_audit = audit_sources(&inventory, &whitelist);
     let mut grouped = BTreeMap::<(String, String, Option<String>), Vec<_>>::new();
     for document in &inventory.documents {
@@ -182,10 +199,7 @@ pub fn run(options: &ScanOptions) -> Result<ScanReceipt, String> {
         }),
     };
 
-    write_json(
-        &contained_join(&study_root, Path::new("scan.json"))?,
-        &receipt,
-    )?;
+    write_json(&scan_path, &receipt)?;
     write_json(
         &contained_join(&study_root, Path::new("source-audit.json"))?,
         &receipt.source_audit,

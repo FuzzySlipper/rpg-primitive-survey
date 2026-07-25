@@ -9,6 +9,10 @@ Every inventory and scan receipt records:
 - diagnostics and an explicit resumability record;
 - deterministic evidence pointers relative to the pinned checkout.
 
+Pinning covers content, not only the `HEAD` label. Materialization fetches the
+exact commit shallowly under the repository-size bound, and every resume/scan
+rejects tracked or untracked checkout changes.
+
 `complete` means only that the configured repository surface was traversed
 within the configured limits. It does not mean that the RPG system, its
 published sources, or its semantic primitives are complete.
@@ -21,6 +25,8 @@ study.
 Source identity is evidence, not a guess. A document with no configured source
 identity is `missing`; a document with conflicting identities is `ambiguous`.
 Both are listed under `unclassifiedOrAmbiguous` and excluded from scan samples.
+Declared packs with missing paths, missing paths on disk, or unsupported file
+layouts force a partial receipt instead of disappearing from the inventory.
 
 Structural signatures encode JSON shape and scalar kinds, not scalar values.
 They support bounded deduplication; they do not prove semantic equivalence.
