@@ -176,6 +176,7 @@ pub fn run(options: &ScanOptions) -> Result<ScanReceipt, String> {
         schema_version: SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_owned(),
         study_id: options.study_id.clone(),
+        profile: inventory.profile,
         status,
         repository: inventory.repository.clone(),
         system: inventory.manifest.clone(),
@@ -264,13 +265,13 @@ fn write_worksheets(study_root: &Path, receipt: &ScanReceipt) -> Result<(), Stri
             .document_count,
         receipt.shape_groups.len()
     );
-    write_text(study_root, "study-summary.md", &summary)?;
+    write_text_if_absent(study_root, "study-summary.md", &summary)?;
 
     let candidates = format!(
         "# Candidate primitives\n\nCandidate limit: {}.\n\nFor each candidate, record:\n\n- stable local candidate ID;\n- concise behavior or data requirement;\n- evidence strength: single-witness, repeated-shape, cross-source, or unresolved;\n- supporting structural signatures and source pointers from `scan.json`;\n- boundary and meaningful counterexample;\n- whether it is generic, system-profile-specific, or content-specific.\n\nNo candidates are generated automatically. A survey agent must interpret evidence without copying source expression.\n",
         receipt.limits.max_candidate_primitives
     );
-    write_text(study_root, "primitive-candidates.md", &candidates)?;
+    write_text_if_absent(study_root, "primitive-candidates.md", &candidates)?;
 
     let mut examples = String::from(
         "# Representative structural examples\n\nThese pointers identify local evidence; they do not reproduce source content.\n\n",
@@ -295,22 +296,25 @@ fn write_worksheets(study_root: &Path, receipt: &ScanReceipt) -> Result<(), Stri
         }
         examples.push_str("\nBoundary to investigate: _unresolved_\n\n");
     }
-    write_text(study_root, "representative-examples.md", &examples)?;
+    write_text_if_absent(study_root, "representative-examples.md", &examples)?;
 
-    write_text(
+    write_text_if_absent(
         study_root,
         "asha-coverage.md",
         "# ASHA coverage assessment\n\nFor every interpreted candidate, record one of: supported, composable from existing primitives, missing primitive, content concern, or unresolved. Cite an exact ASHA surface and local evidence pointer. This worksheet does not authorize implementation.\n",
     )?;
-    write_text(
+    write_text_if_absent(
         study_root,
         "open-questions.md",
         "# Open questions and source pointers\n\nRecord ambiguity, competing interpretations, missing evidence, limit effects, and the smallest additional source witness that could resolve each question.\n",
     )
 }
 
-fn write_text(study_root: &Path, name: &str, content: &str) -> Result<(), String> {
+fn write_text_if_absent(study_root: &Path, name: &str, content: &str) -> Result<(), String> {
     let path = contained_join(study_root, Path::new(name))?;
+    if path.exists() {
+        return Ok(());
+    }
     fs::write(&path, content)
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }

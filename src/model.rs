@@ -5,6 +5,14 @@ use serde_json::Value;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SurveyProfile {
+    #[default]
+    Generic,
+    FoundryDnd5e,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Limits {
@@ -93,6 +101,8 @@ pub struct PackInventory {
     pub bytes: u64,
     pub decodable_files: usize,
     pub decoded_documents: usize,
+    #[serde(default)]
+    pub profile_skipped_files: Vec<String>,
     pub unsupported_files: Vec<String>,
 }
 
@@ -155,6 +165,8 @@ pub struct InventoryReceipt {
     pub schema_version: u32,
     pub tool_version: String,
     pub study_id: String,
+    #[serde(default)]
+    pub profile: SurveyProfile,
     pub status: ReceiptStatus,
     pub repository: RepositoryReceipt,
     pub manifest: SystemManifest,
@@ -220,6 +232,8 @@ pub struct ScanReceipt {
     pub schema_version: u32,
     pub tool_version: String,
     pub study_id: String,
+    #[serde(default)]
+    pub profile: SurveyProfile,
     pub status: ReceiptStatus,
     pub repository: RepositoryReceipt,
     pub system: SystemManifest,

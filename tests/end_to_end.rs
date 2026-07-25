@@ -117,6 +117,26 @@ fn pinned_inventory_scan_partition_dedupe_and_resume() {
                 .is_file()
         );
     }
+
+    let candidates_path = work
+        .path()
+        .join("studies/synthetic/primitive-candidates.md");
+    fs::write(&candidates_path, "# Interpreted candidates\n")
+        .expect("replace generated worksheet with interpreted content");
+    let repeated_scan = run(&[
+        "scan",
+        "--study",
+        "synthetic",
+        "--include-source",
+        "core",
+        "--work-root",
+        work.path().to_str().expect("work path"),
+    ]);
+    assert!(repeated_scan.status.success(), "{}", stderr(&repeated_scan));
+    assert_eq!(
+        fs::read_to_string(candidates_path).expect("read preserved worksheet"),
+        "# Interpreted candidates\n"
+    );
 }
 
 #[test]
@@ -521,6 +541,68 @@ fn bounded_fetch_stops_a_remote_like_oversized_snapshot() {
         "SURVEY_REPOSITORY_SIZE_LIMIT"
     );
     assert!(!work.path().join("studies/bounded-fetch/checkout").exists());
+}
+
+#[test]
+fn dnd5e_profile_maps_authored_yaml_and_pack_provenance() {
+    let fixture = TempDir::new().expect("fixture tempdir");
+    copy_tree(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic-dnd5e"),
+        fixture.path(),
+    );
+    initialize_git(fixture.path(), "main");
+    let work = TempDir::new().expect("work tempdir");
+    let inventory_output = run(&[
+        "inventory",
+        "--study",
+        "profile",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--profile",
+        "foundry-dnd5e",
+        "--work-root",
+        work.path().to_str().expect("work path"),
+    ]);
+    assert!(
+        inventory_output.status.success(),
+        "{}",
+        stderr(&inventory_output)
+    );
+    let inventory = read_json(&work.path().join("studies/profile/inventory.json"));
+    assert_eq!(inventory["status"], "complete");
+    assert_eq!(inventory["profile"], "foundry-dnd5e");
+    assert_eq!(inventory["counts"]["decodedDocuments"], 1);
+    assert_eq!(inventory["counts"]["bySource"]["Synthetic Core 1.0"], 1);
+    assert_eq!(inventory["packs"][0]["path"], "packs/_source/core");
+    assert_eq!(
+        inventory["packs"][0]["profileSkippedFiles"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        inventory["documents"][0]["source"]["classified"]["pointer"],
+        "fallback:pack:core"
+    );
+
+    let scan_output = run(&[
+        "scan",
+        "--study",
+        "profile",
+        "--include-source",
+        "Synthetic Core 1.0",
+        "--work-root",
+        work.path().to_str().expect("work path"),
+    ]);
+    assert!(scan_output.status.success(), "{}", stderr(&scan_output));
+    let scan = read_json(&work.path().join("studies/profile/scan.json"));
+    assert_eq!(scan["profile"], "foundry-dnd5e");
+    assert_eq!(scan["sourceAudit"]["included"]["documentCount"], 1);
+    assert_eq!(
+        scan["sourceAudit"]["unclassifiedOrAmbiguous"]["documentCount"],
+        0
+    );
 }
 
 fn run(arguments: &[&str]) -> Output {

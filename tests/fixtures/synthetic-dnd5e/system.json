@@ -1,0 +1,25 @@
+{
+  "id": "synthetic-dnd5e",
+  "title": "Synthetic D20 System",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "14"
+  },
+  "packs": [
+    {
+      "name": "core",
+      "label": "Synthetic Core",
+      "path": "packs/core",
+      "type": "Item",
+      "flags": {
+        "dnd5e": {
+          "sourceBook": "Synthetic Core 1.0",
+          "types": [
+            "action"
+          ]
+        }
+      }
+    }
+  ]
+}

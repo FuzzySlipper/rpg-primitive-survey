@@ -1,0 +1,14 @@
+_id: syntheticAction01
+name: Synthetic Action
+type: action
+system:
+  activities:
+    abcdefghijklmnop:
+      type: attack
+      activation:
+        type: action
+      target:
+        affects:
+          type: creature
+  source:
+    rules: synthetic

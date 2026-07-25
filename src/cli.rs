@@ -29,6 +29,7 @@ fn inventory_command(options: &ParsedOptions) -> Result<(), String> {
         "repository",
         "ref",
         "manifest",
+        "profile",
         "content-root",
         "source-pointer",
         "source-fallback",
@@ -50,8 +51,10 @@ fn inventory_command(options: &ParsedOptions) -> Result<(), String> {
             .unwrap_or_else(|| ".work".to_owned()),
     ))?;
     let limits = options.limits()?;
+    let profile = parse_profile(options.one("profile")?)?;
     let receipt = inventory::run(&InventoryOptions {
         study_id,
+        profile,
         repository,
         requested_ref,
         manifest_path: options
@@ -256,9 +259,19 @@ fn parse_usize(name: &str, value: Option<String>, default: usize) -> Result<usiz
     })
 }
 
+fn parse_profile(value: Option<String>) -> Result<crate::model::SurveyProfile, String> {
+    match value.as_deref().unwrap_or("generic") {
+        "generic" => Ok(crate::model::SurveyProfile::Generic),
+        "foundry-dnd5e" => Ok(crate::model::SurveyProfile::FoundryDnd5e),
+        profile => Err(format!(
+            "unknown survey profile {profile:?}; expected generic or foundry-dnd5e"
+        )),
+    }
+}
+
 fn usage() -> String {
     "Usage:
-  rpg-primitive-survey inventory --study ID --repository URL [--ref main] [--manifest system.json] [--content-root PATH] [--source-pointer JSON_POINTER] [--source-fallback PACK=SOURCE] [--work-root PATH] [limit options]
+  rpg-primitive-survey inventory --study ID --repository URL [--ref main] [--manifest system.json] [--profile generic|foundry-dnd5e] [--content-root PATH] [--source-pointer JSON_POINTER] [--source-fallback PACK=SOURCE] [--work-root PATH] [limit options]
   rpg-primitive-survey scan --study ID --include-source SOURCE [--include-source SOURCE] [--work-root PATH] [limit options]
   rpg-primitive-survey tracked-audit [--repository-root PATH] [--max-tracked-bytes N]
 

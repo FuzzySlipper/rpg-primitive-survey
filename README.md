@@ -71,18 +71,26 @@ Generated output is local-only under:
 ```
 
 The Markdown files are study worksheets, not implementation specifications.
-They retain source pointers, evidence strength, boundaries, and unanswered
-questions so a later coding task can make an explicit ASHA design decision.
+They are created only when absent, so rerunning a scan updates machine receipts
+without destroying interpreted work. They retain source pointers, evidence
+strength, boundaries, and unanswered questions so a later coding task can make
+an explicit ASHA design decision.
 
 ## Source layouts
 
-The generic profile discovers JSON and JSONL documents from pack paths declared
-by `system.json`, plus any repeated `--content-root` paths. It reads source
+The generic profile discovers JSON, JSONL, and YAML documents from pack paths
+declared by `system.json`, plus any repeated `--content-root` paths. It reads source
 identities from a small set of common JSON pointers. System-specific survey
 profiles may add explicit content roots and source pointers without weakening
 the default exclusion policy. When provenance genuinely exists only at the
 pack/layout level, `--source-fallback PACK=SOURCE` classifies missing identities
 for that pack. It never overrides conflicting document-level evidence.
+
+`--profile foundry-dnd5e` maps declared `packs/<id>` build outputs to authored
+`packs/_source/<id>` YAML, excludes `_folder.yml`/`_folder.yaml` organization records, and
+uses a non-empty manifest `flags.dnd5e.sourceBook` as missing-only pack
+provenance. Conflicting document evidence remains ambiguous and excluded.
+Profile behavior is structural; it does not embed or reproduce D&D content.
 
 ## Repository hygiene
 

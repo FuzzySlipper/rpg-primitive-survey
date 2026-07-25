@@ -8,7 +8,7 @@ use crate::git_source;
 use crate::model::{
     Compatibility, Diagnostic, DocumentEvidence, InventoryCounts, InventoryReceipt, Limits,
     PackDeclarationIssue, PackInventory, ReceiptStatus, RepositoryReceipt, ResumeState,
-    SCHEMA_VERSION, SourceIdentity, SystemManifest,
+    SCHEMA_VERSION, SourceIdentity, SurveyProfile, SystemManifest,
 };
 use crate::safety::{contained_join, directory_bytes, visit_files};
 use crate::shape::structural_signature;
@@ -24,6 +24,7 @@ pub const DEFAULT_SOURCE_POINTERS: &[&str] = &[
 
 pub struct InventoryOptions {
     pub study_id: String,
+    pub profile: SurveyProfile,
     pub repository: String,
     pub requested_ref: String,
     pub manifest_path: String,
@@ -48,6 +49,7 @@ struct DecodeCursor {
 struct FileDiscovery {
     document_files: Vec<(String, PackSource)>,
     unsupported_by_pack: BTreeMap<String, Vec<String>>,
+    profile_skipped_by_pack: BTreeMap<String, Vec<String>>,
     missing_packs: Vec<String>,
 }
 
@@ -83,10 +85,10 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
         options.source_pointers.clone()
     };
     if let Some(receipt) = &previous {
-        let configuration_changed = receipt.manifest.path != options.manifest_path
+        let configuration_changed = receipt.profile != options.profile
+            || receipt.manifest.path != options.manifest_path
             || receipt.content_roots != options.content_roots
-            || receipt.source_pointers != source_pointers
-            || receipt.source_fallbacks != options.source_fallbacks;
+            || receipt.source_pointers != source_pointers;
         let can_restart_partial = receipt.status == ReceiptStatus::Partial
             && receipt.resume.next_file.is_none()
             && receipt.resume.next_document_index.is_none();
@@ -125,9 +127,31 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
     let manifest_file = contained_join(&checkout, Path::new(&options.manifest_path))?;
     let manifest_value = read_json(&manifest_file)?;
     let manifest = parse_manifest(&options.manifest_path, &manifest_value);
-    let (pack_sources, pack_declaration_issues) =
-        collect_pack_sources(&manifest_value, &options.content_roots);
-    let mut discovery = discover_pack_files(&checkout, &pack_sources)?;
+    let (pack_sources, pack_declaration_issues, profile_fallbacks) =
+        collect_pack_sources(&manifest_value, &options.content_roots, options.profile);
+    let mut effective_fallbacks = profile_fallbacks;
+    for (pack, source) in &options.source_fallbacks {
+        if let Some(profile_source) = effective_fallbacks.insert(pack.clone(), source.clone())
+            && profile_source != *source
+        {
+            return Err(format!(
+                "explicit fallback for pack {pack:?} conflicts with profile fallback {profile_source:?}"
+            ));
+        }
+    }
+    if let Some(receipt) = &previous {
+        let fallback_changed = receipt.source_fallbacks != effective_fallbacks;
+        let can_restart_partial = receipt.status == ReceiptStatus::Partial
+            && receipt.resume.next_file.is_none()
+            && receipt.resume.next_document_index.is_none();
+        if fallback_changed && !can_restart_partial {
+            return Err(
+                "existing study provenance configuration differs; choose another study id"
+                    .to_owned(),
+            );
+        }
+    }
+    let mut discovery = discover_pack_files(&checkout, &pack_sources, options.profile)?;
     discovery
         .document_files
         .sort_by(|left, right| left.0.cmp(&right.0));
@@ -185,7 +209,8 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
                 pack,
                 &value,
                 &source_pointers,
-                &options.source_fallbacks,
+                &effective_fallbacks,
+                options.profile,
             ));
         }
     }
@@ -211,6 +236,11 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
                     .filter(|(_, owner)| owner.id == pack.id)
                     .count(),
                 decoded_documents,
+                profile_skipped_files: discovery
+                    .profile_skipped_by_pack
+                    .get(&pack.id)
+                    .cloned()
+                    .unwrap_or_default(),
                 unsupported_files: discovery
                     .unsupported_by_pack
                     .get(&pack.id)
@@ -319,6 +349,7 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
         schema_version: SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_owned(),
         study_id: options.study_id.clone(),
+        profile: options.profile,
         status,
         repository: RepositoryReceipt {
             url: options.repository.clone(),
@@ -331,7 +362,7 @@ pub fn run(options: &InventoryOptions) -> Result<InventoryReceipt, String> {
         limits: options.limits.clone(),
         content_roots: options.content_roots.clone(),
         source_pointers,
-        source_fallbacks: options.source_fallbacks.clone(),
+        source_fallbacks: effective_fallbacks,
         packs,
         pack_declaration_issues,
         counts,
@@ -353,6 +384,7 @@ fn size_limited_receipt(
         schema_version: SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_owned(),
         study_id: options.study_id.clone(),
+        profile: options.profile,
         status: ReceiptStatus::Partial,
         repository: RepositoryReceipt {
             url: options.repository.clone(),
@@ -436,9 +468,15 @@ fn parse_manifest(path: &str, value: &Value) -> SystemManifest {
 fn collect_pack_sources(
     manifest: &Value,
     extra_roots: &[String],
-) -> (Vec<PackSource>, Vec<PackDeclarationIssue>) {
+    profile: SurveyProfile,
+) -> (
+    Vec<PackSource>,
+    Vec<PackDeclarationIssue>,
+    BTreeMap<String, String>,
+) {
     let mut packs = Vec::new();
     let mut issues = Vec::new();
+    let mut profile_fallbacks = BTreeMap::new();
     if let Some(values) = manifest.get("packs").and_then(Value::as_array) {
         for (index, value) in values.iter().enumerate() {
             let id = value
@@ -447,9 +485,10 @@ fn collect_pack_sources(
                 .and_then(Value::as_str)
                 .map_or_else(|| format!("manifest-pack-{index}"), str::to_owned);
             if let Some(path) = value.get("path").and_then(Value::as_str) {
+                collect_profile_fallback(&id, value, profile, &mut profile_fallbacks);
                 packs.push(PackSource {
                     id,
-                    path: path.to_owned(),
+                    path: profile_pack_path(path, profile),
                     document_type: value
                         .get("type")
                         .or_else(|| value.get("documentType"))
@@ -467,9 +506,10 @@ fn collect_pack_sources(
     if let Some(values) = manifest.get("packs").and_then(Value::as_object) {
         for (id, value) in values {
             if let Some(path) = value.get("path").and_then(Value::as_str) {
+                collect_profile_fallback(id, value, profile, &mut profile_fallbacks);
                 packs.push(PackSource {
                     id: id.clone(),
-                    path: path.to_owned(),
+                    path: profile_pack_path(path, profile),
                     document_type: value
                         .get("type")
                         .or_else(|| value.get("documentType"))
@@ -503,13 +543,46 @@ fn collect_pack_sources(
     }
     packs.sort_by(|left, right| left.path.cmp(&right.path));
     packs.dedup_by(|left, right| left.path == right.path);
-    (packs, issues)
+    (packs, issues, profile_fallbacks)
 }
 
-fn discover_pack_files(checkout: &Path, packs: &[PackSource]) -> Result<FileDiscovery, String> {
+fn profile_pack_path(path: &str, profile: SurveyProfile) -> String {
+    if profile == SurveyProfile::FoundryDnd5e {
+        path.strip_prefix("packs/")
+            .map_or_else(|| path.to_owned(), |pack| format!("packs/_source/{pack}"))
+    } else {
+        path.to_owned()
+    }
+}
+
+fn collect_profile_fallback(
+    pack_id: &str,
+    declaration: &Value,
+    profile: SurveyProfile,
+    fallbacks: &mut BTreeMap<String, String>,
+) {
+    if profile != SurveyProfile::FoundryDnd5e {
+        return;
+    }
+    if let Some(source) = declaration
+        .pointer("/flags/dnd5e/sourceBook")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+    {
+        fallbacks.insert(pack_id.to_owned(), source.to_owned());
+    }
+}
+
+fn discover_pack_files(
+    checkout: &Path,
+    packs: &[PackSource],
+    profile: SurveyProfile,
+) -> Result<FileDiscovery, String> {
     let mut discovery = FileDiscovery {
         document_files: Vec::new(),
         unsupported_by_pack: BTreeMap::new(),
+        profile_skipped_by_pack: BTreeMap::new(),
         missing_packs: Vec::new(),
     };
     for pack in packs {
@@ -519,11 +592,11 @@ fn discover_pack_files(checkout: &Path, packs: &[PackSource]) -> Result<FileDisc
             continue;
         }
         if root.is_file() {
-            classify_pack_file(checkout, &root, pack, &mut discovery)?;
+            classify_pack_file(checkout, &root, pack, profile, &mut discovery)?;
             continue;
         }
         visit_files(&root, &mut |path| {
-            classify_pack_file(checkout, path, pack, &mut discovery)
+            classify_pack_file(checkout, path, pack, profile, &mut discovery)
         })?;
     }
     Ok(discovery)
@@ -533,6 +606,7 @@ fn classify_pack_file(
     checkout: &Path,
     path: &Path,
     pack: &PackSource,
+    profile: SurveyProfile,
     discovery: &mut FileDiscovery,
 ) -> Result<(), String> {
     let extension = path.extension().and_then(|value| value.to_str());
@@ -541,7 +615,21 @@ fn classify_pack_file(
         .map_err(|error| format!("failed to make evidence pointer: {error}"))?
         .to_string_lossy()
         .replace('\\', "/");
-    if matches!(extension, Some("json" | "jsonl" | "ndjson")) {
+    if profile == SurveyProfile::FoundryDnd5e
+        && matches!(
+            path.file_name().and_then(|value| value.to_str()),
+            Some("_folder.yml" | "_folder.yaml")
+        )
+    {
+        discovery
+            .profile_skipped_by_pack
+            .entry(pack.id.clone())
+            .or_default()
+            .push(relative);
+    } else if matches!(
+        extension,
+        Some("json" | "jsonl" | "ndjson" | "yaml" | "yml")
+    ) {
         discovery.document_files.push((
             relative,
             PackSource {
@@ -574,6 +662,10 @@ fn decode_documents(path: &Path) -> Result<Vec<Value>, String> {
                     .map_err(|error| format!("failed to decode {}: {error}", path.display()))
             })
             .collect()
+    } else if matches!(extension, Some("yaml" | "yml")) {
+        let value: Value = yaml_serde::from_slice(&bytes)
+            .map_err(|error| format!("failed to decode {}: {error}", path.display()))?;
+        Ok(vec![value])
     } else {
         let value: Value = serde_json::from_slice(&bytes)
             .map_err(|error| format!("failed to decode {}: {error}", path.display()))?;
@@ -590,6 +682,7 @@ fn evidence_for(
     value: &Value,
     source_pointers: &[String],
     source_fallbacks: &BTreeMap<String, String>,
+    profile: SurveyProfile,
 ) -> DocumentEvidence {
     let source = match classify_source(value, source_pointers) {
         SourceIdentity::Missing => {
@@ -618,7 +711,7 @@ fn evidence_for(
         document_type,
         subtype,
         source,
-        structural_signature: structural_signature(value),
+        structural_signature: structural_signature(value, profile == SurveyProfile::FoundryDnd5e),
     }
 }
 
