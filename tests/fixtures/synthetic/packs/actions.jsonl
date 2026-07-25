@@ -1,0 +1,5 @@
+{"name":"Synthetic Strike","type":"action","system":{"source":{"id":"core"},"target":{"kind":"single"},"value":4}}
+{"name":"Synthetic Shove","type":"action","system":{"source":{"id":"core"},"target":{"kind":"single"},"value":8}}
+{"name":"Synthetic Beam","type":"action","system":{"source":{"id":"supplement"},"target":{"kind":"line","length":6},"value":6}}
+{"name":"Synthetic Mystery","type":"talent","system":{"target":{"kind":"self"},"value":true}}
+{"name":"Synthetic Conflict","type":"talent","source":"supplement","system":{"source":{"id":"core"},"value":false}}

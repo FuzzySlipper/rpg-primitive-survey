@@ -1,0 +1,7 @@
+/target/
+/.work/
+/.survey-work/
+/*.sqlite
+/*.sqlite3
+/*.db
+/*.ldb

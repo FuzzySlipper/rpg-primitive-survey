@@ -1,0 +1,18 @@
+{
+  "id": "synthetic-survey-system",
+  "title": "Synthetic Survey System",
+  "version": "3.2.1",
+  "compatibility": {
+    "minimum": "11",
+    "verified": "12",
+    "maximum": "13"
+  },
+  "packs": [
+    {
+      "name": "synthetic-actions",
+      "label": "Synthetic Actions",
+      "path": "packs/actions.jsonl",
+      "type": "Item"
+    }
+  ]
+}
