@@ -547,11 +547,14 @@ fn collect_pack_sources(
 }
 
 fn profile_pack_path(path: &str, profile: SurveyProfile) -> String {
-    if profile == SurveyProfile::FoundryDnd5e {
-        path.strip_prefix("packs/")
-            .map_or_else(|| path.to_owned(), |pack| format!("packs/_source/{pack}"))
-    } else {
-        path.to_owned()
+    match profile {
+        SurveyProfile::FoundryDnd5e => path
+            .strip_prefix("packs/")
+            .map_or_else(|| path.to_owned(), |pack| format!("packs/_source/{pack}")),
+        SurveyProfile::FoundryPf2e => path
+            .strip_prefix("packs/")
+            .map_or_else(|| path.to_owned(), |pack| format!("packs/pf2e/{pack}")),
+        SurveyProfile::Generic => path.to_owned(),
     }
 }
 
@@ -615,12 +618,18 @@ fn classify_pack_file(
         .map_err(|error| format!("failed to make evidence pointer: {error}"))?
         .to_string_lossy()
         .replace('\\', "/");
-    if profile == SurveyProfile::FoundryDnd5e
-        && matches!(
+    let organization_file = match profile {
+        SurveyProfile::FoundryDnd5e => matches!(
             path.file_name().and_then(|value| value.to_str()),
             Some("_folder.yml" | "_folder.yaml")
-        )
-    {
+        ),
+        SurveyProfile::FoundryPf2e => matches!(
+            path.file_name().and_then(|value| value.to_str()),
+            Some("_folders.json")
+        ),
+        SurveyProfile::Generic => false,
+    };
+    if organization_file {
         discovery
             .profile_skipped_by_pack
             .entry(pack.id.clone())
@@ -711,7 +720,7 @@ fn evidence_for(
         document_type,
         subtype,
         source,
-        structural_signature: structural_signature(value, profile == SurveyProfile::FoundryDnd5e),
+        structural_signature: structural_signature(value, profile != SurveyProfile::Generic),
     }
 }
 

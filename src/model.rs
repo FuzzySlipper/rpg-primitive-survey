@@ -11,6 +11,7 @@ pub enum SurveyProfile {
     #[default]
     Generic,
     FoundryDnd5e,
+    FoundryPf2e,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

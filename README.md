@@ -90,7 +90,12 @@ for that pack. It never overrides conflicting document-level evidence.
 `packs/_source/<id>` YAML, excludes `_folder.yml`/`_folder.yaml` organization records, and
 uses a non-empty manifest `flags.dnd5e.sourceBook` as missing-only pack
 provenance. Conflicting document evidence remains ambiguous and excluded.
-Profile behavior is structural; it does not embed or reproduce D&D content.
+
+`--profile foundry-pf2e` maps declared `packs/<id>` build outputs to
+`packs/pf2e/<id>`, excludes `_folders.json` organization records, and retains
+per-document `system.publication.title` identities. The profile does not infer
+publication identity from pack names or labels.
+Profile behavior is structural; it does not embed or reproduce source content.
 
 ## Repository hygiene
 

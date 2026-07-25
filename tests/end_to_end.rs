@@ -605,6 +605,67 @@ fn dnd5e_profile_maps_authored_yaml_and_pack_provenance() {
     );
 }
 
+#[test]
+fn pf2e_profile_maps_pack_builds_and_publication_identity() {
+    let fixture = TempDir::new().expect("fixture tempdir");
+    copy_tree(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic-pf2e"),
+        fixture.path(),
+    );
+    initialize_git(fixture.path(), "main");
+    let work = TempDir::new().expect("work tempdir");
+    let inventory_output = run(&[
+        "inventory",
+        "--study",
+        "profile-pf2e",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--manifest",
+        "system.pf2e.json",
+        "--profile",
+        "foundry-pf2e",
+        "--work-root",
+        work.path().to_str().expect("work path"),
+    ]);
+    assert!(
+        inventory_output.status.success(),
+        "{}",
+        stderr(&inventory_output)
+    );
+    let inventory = read_json(&work.path().join("studies/profile-pf2e/inventory.json"));
+    assert_eq!(inventory["status"], "complete");
+    assert_eq!(inventory["profile"], "foundry-pf2e");
+    assert_eq!(inventory["manifest"]["path"], "system.pf2e.json");
+    assert_eq!(inventory["counts"]["decodedDocuments"], 1);
+    assert_eq!(inventory["counts"]["bySource"]["Synthetic Player Core"], 1);
+    assert_eq!(inventory["packs"][0]["path"], "packs/pf2e/core");
+    assert_eq!(
+        inventory["packs"][0]["profileSkippedFiles"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let scan_output = run(&[
+        "scan",
+        "--study",
+        "profile-pf2e",
+        "--include-source",
+        "Synthetic Player Core",
+        "--work-root",
+        work.path().to_str().expect("work path"),
+    ]);
+    assert!(scan_output.status.success(), "{}", stderr(&scan_output));
+    let scan = read_json(&work.path().join("studies/profile-pf2e/scan.json"));
+    assert_eq!(scan["profile"], "foundry-pf2e");
+    assert_eq!(scan["sourceAudit"]["included"]["documentCount"], 1);
+    assert_eq!(
+        scan["sourceAudit"]["unclassifiedOrAmbiguous"]["documentCount"],
+        0
+    );
+}
+
 fn run(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rpg-primitive-survey"))
         .args(arguments)

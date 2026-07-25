@@ -263,15 +263,16 @@ fn parse_profile(value: Option<String>) -> Result<crate::model::SurveyProfile, S
     match value.as_deref().unwrap_or("generic") {
         "generic" => Ok(crate::model::SurveyProfile::Generic),
         "foundry-dnd5e" => Ok(crate::model::SurveyProfile::FoundryDnd5e),
+        "foundry-pf2e" => Ok(crate::model::SurveyProfile::FoundryPf2e),
         profile => Err(format!(
-            "unknown survey profile {profile:?}; expected generic or foundry-dnd5e"
+            "unknown survey profile {profile:?}; expected generic, foundry-dnd5e, or foundry-pf2e"
         )),
     }
 }
 
 fn usage() -> String {
     "Usage:
-  rpg-primitive-survey inventory --study ID --repository URL [--ref main] [--manifest system.json] [--profile generic|foundry-dnd5e] [--content-root PATH] [--source-pointer JSON_POINTER] [--source-fallback PACK=SOURCE] [--work-root PATH] [limit options]
+  rpg-primitive-survey inventory --study ID --repository URL [--ref main] [--manifest system.json] [--profile generic|foundry-dnd5e|foundry-pf2e] [--content-root PATH] [--source-pointer JSON_POINTER] [--source-fallback PACK=SOURCE] [--work-root PATH] [limit options]
   rpg-primitive-survey scan --study ID --include-source SOURCE [--include-source SOURCE] [--work-root PATH] [limit options]
   rpg-primitive-survey tracked-audit [--repository-root PATH] [--max-tracked-bytes N]
 
