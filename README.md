@@ -51,8 +51,9 @@ truncates or claims completeness. Rerunning against the same study continues at
 the original pinned revision. Raise the relevant limit when the recorded total
 has reached the old ceiling.
 
-An existing checkout must have the recorded `HEAD` and a clean tracked and
-untracked status. Local edits never become evidence under an old pin.
+An existing checkout must have the recorded `HEAD` and no tracked, untracked,
+or ignored additions. Local filesystem edits never become evidence under an
+old pin.
 
 Generated output is local-only under:
 

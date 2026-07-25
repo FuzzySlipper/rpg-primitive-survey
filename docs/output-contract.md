@@ -11,7 +11,7 @@ Every inventory and scan receipt records:
 
 Pinning covers content, not only the `HEAD` label. Materialization fetches the
 exact commit shallowly under the repository-size bound, and every resume/scan
-rejects tracked or untracked checkout changes.
+rejects tracked, untracked, and ignored checkout changes.
 
 `complete` means only that the configured repository surface was traversed
 within the configured limits. It does not mean that the RPG system, its

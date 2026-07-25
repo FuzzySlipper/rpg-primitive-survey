@@ -211,6 +211,7 @@ pub fn assert_clean_checkout(checkout: &Path) -> Result<(), String> {
             "status",
             "--porcelain=v1",
             "--untracked-files=all",
+            "--ignored=matching",
         ]),
         "inspect checkout cleanliness",
     )?;
@@ -218,7 +219,7 @@ pub fn assert_clean_checkout(checkout: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "SURVEY_CHECKOUT_DIRTY: pinned checkout contains tracked or untracked changes:\n{}",
+            "SURVEY_CHECKOUT_DIRTY: pinned checkout contains tracked, untracked, or ignored changes:\n{}",
             status.trim()
         ))
     }

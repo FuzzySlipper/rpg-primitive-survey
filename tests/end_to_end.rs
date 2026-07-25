@@ -366,6 +366,73 @@ fn dirty_checkout_cannot_be_resumed_under_the_old_pin() {
 }
 
 #[test]
+fn ignored_pack_file_cannot_be_resumed_under_the_old_pin() {
+    let fixture = TempDir::new().expect("fixture tempdir");
+    copy_tree(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic"),
+        fixture.path(),
+    );
+    let manifest_path = fixture.path().join("system.json");
+    let mut manifest = read_json(&manifest_path);
+    manifest["packs"][0]["path"] = Value::String("packs".to_owned());
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("encode manifest"),
+    )
+    .expect("write manifest");
+    fs::write(fixture.path().join(".gitignore"), "/packs/ignored.jsonl\n")
+        .expect("write fixture ignore");
+    initialize_git(fixture.path(), "main");
+    let work = TempDir::new().expect("work tempdir");
+    let first = run(&[
+        "inventory",
+        "--study",
+        "ignored-resume",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--work-root",
+        work.path().to_str().expect("work path"),
+        "--max-decoded-documents",
+        "2",
+    ]);
+    assert!(first.status.success(), "{}", stderr(&first));
+
+    fs::write(
+        work.path()
+            .join("studies/ignored-resume/checkout/packs/ignored.jsonl"),
+        "{\"name\":\"Ignored Evidence\",\"type\":\"action\",\"system\":{\"source\":{\"id\":\"core\"}}}\n",
+    )
+    .expect("write ignored checkout evidence");
+    let checkout = work.path().join("studies/ignored-resume/checkout");
+    assert!(
+        git_output(
+            &checkout,
+            &["status", "--porcelain=v1", "--untracked-files=all"]
+        )
+        .is_empty()
+    );
+
+    let resume = run(&[
+        "inventory",
+        "--study",
+        "ignored-resume",
+        "--repository",
+        fixture.path().to_str().expect("fixture path"),
+        "--work-root",
+        work.path().to_str().expect("work path"),
+        "--max-decoded-documents",
+        "20",
+    ]);
+    assert!(!resume.status.success());
+    let error = stderr(&resume);
+    assert!(error.contains("SURVEY_CHECKOUT_DIRTY"), "{error}");
+    assert!(error.contains("!! packs/ignored.jsonl"), "{error}");
+    let inventory = read_json(&work.path().join("studies/ignored-resume/inventory.json"));
+    assert_eq!(inventory["status"], "partial");
+    assert_eq!(inventory["counts"]["decodedDocuments"], 2);
+}
+
+#[test]
 fn repository_limit_stops_materialization_and_can_resume_at_the_same_pin() {
     let fixture = TempDir::new().expect("fixture tempdir");
     copy_tree(
