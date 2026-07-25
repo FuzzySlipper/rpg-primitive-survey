@@ -1,0 +1,17 @@
+{
+  "_id": "synthetic-action",
+  "name": "Synthetic Action",
+  "type": "action",
+  "system": {
+    "publication": {
+      "title": "Synthetic Player Core"
+    },
+    "actionCost": 1,
+    "rules": [
+      {
+        "key": "SyntheticRule",
+        "selector": "synthetic"
+      }
+    ]
+  }
+}

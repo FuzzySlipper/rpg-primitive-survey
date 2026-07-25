@@ -1,0 +1,18 @@
+{
+  "id": "synthetic-pf2e",
+  "title": "Synthetic PF2e System",
+  "version": "8.3.0",
+  "compatibility": {
+    "minimum": "14.361",
+    "verified": "14.364",
+    "maximum": "14"
+  },
+  "packs": [
+    {
+      "name": "core",
+      "label": "Synthetic Core",
+      "path": "packs/core",
+      "type": "Item"
+    }
+  ]
+}
